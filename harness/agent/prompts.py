@@ -83,9 +83,15 @@ DEMO_NOTE = (
     "the positions for YOUR scene from your own images and state."
 )
 
+PRIMER_NOTE = (
+    "A task-independent COMMAND PRIMER is shown before your first turn. It illustrates what the commands do; "
+    "no task demonstration is provided. Use the primer to understand the command interface, and plan for the "
+    "current task using its instruction, your own images and robot state. Read all positions from your current scene."
+)
+
 
 def system_prompt(profile: Optional[dict], max_commands_per_turn: int, memory_enabled: bool,
-                  context: Optional[dict] = None) -> str:
+                  context: Optional[dict] = None, *, demo_note: str = DEMO_NOTE) -> str:
     memory_field = (
         '  "memory": "<rewrite your running notes: what you have achieved, what you learned (e.g. grasp height that '
         'worked, commands that failed), and what remains; keep it under 120 words>",\n'
@@ -98,7 +104,7 @@ def system_prompt(profile: Optional[dict], max_commands_per_turn: int, memory_en
         + _profile_text(profile, context)
         + "\n\n"
         + GRAMMAR_HELP
-        + "\n" + DEMO_NOTE + "\n"
+        + "\n" + demo_note + "\n"
         + "\nRESPONSE FORMAT: reply with ONE JSON object and nothing else:\n"
         "{\n"
         '  "scene": "<one or two sentences: where the relevant objects and the grippers are, in cm>",\n'

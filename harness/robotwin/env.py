@@ -624,6 +624,8 @@ class RoboTwinDiscreteEnv(DiscreteEnvBase):
             if self.env.check_success():
                 self.env.eval_success = True
         except Exception:  # noqa: BLE001
+            if getattr(self, 'strict_execution', False):
+                raise
             pass
         return steps
 
@@ -741,6 +743,8 @@ class RoboTwinDiscreteEnv(DiscreteEnvBase):
         try:
             self.env.take_action(action, action_type="ee")
         except Exception as exc:  # noqa: BLE001
+            if getattr(self, 'strict_execution', False):
+                raise
             logger.exception("take_action failed")
             result.update(ok=False, note=f"simulator error: {exc}")
         # how long the robot was moving for this command, in simulated time: one scene.step per control tick

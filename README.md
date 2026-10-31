@@ -391,6 +391,8 @@ experiment bookkeeping.
 
 ## Documentation
 
+* [harness/sceneact/README.md](harness/sceneact/README.md): evaluate this fork against
+  the frozen SceneAct 54% baseline (paired scenes/model/budgets, 8 GPUs × 3 workers).
 * [harness/README.md](harness/README.md): the RoboTwin harness, the command
   grammar, the design points, and how to put the controller on another robot.
 * [evaluation/policies/vlm_agent/README.md](evaluation/policies/vlm_agent/README.md):

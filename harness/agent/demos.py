@@ -180,12 +180,20 @@ def demo_messages(demos: "Demo | list[Demo]") -> list[dict]:
     tasks = [d for d in demos if d.kind != "primer"]
     for demo in demos:
         content += _demo_content(demo, tasks.index(demo) + 1 if demo in tasks else 0, len(tasks))
-    content.append(text_part("--- END OF THE DEMONSTRATION" + ("S" if len(demos) > 1 else "") + ". Your own episode starts "
-                             "with the next message; its scene, object positions and table height differ, so measure "
-                             "everything again from your own images."))
+    primer_only = bool(demos) and not tasks
+    ending = ("--- END OF THE COMMAND PRIMER. No task demonstration is provided. Your own episode starts "
+              "with the next message; read its scene, object positions and table height from your own images and state."
+              if primer_only else
+              "--- END OF THE DEMONSTRATION" + ("S" if len(demos) > 1 else "") + ". Your own episode starts "
+              "with the next message; its scene, object positions and table height differ, so measure "
+              "everything again from your own images.")
+    content.append(text_part(ending))
     return [
         {"role": "user", "content": content},
-        {"role": "assistant", "content": "Understood. I will follow the demonstrated strategy and read all positions from my own images and state."},
+        {"role": "assistant", "content":
+            "Understood. I will use the command interface to plan for the current task and read all positions from my own images and state."
+            if primer_only else
+            "Understood. I will follow the demonstrated strategy and read all positions from my own images and state."},
     ]
 
 
@@ -194,8 +202,9 @@ def _demo_content(demo: Demo, index: int, total: int) -> list[dict]:
     if demo.kind == "primer":
         header = (f"COMMAND PRIMER ({len(demo.frames)} steps, {n_img} images; not a task): what each command does, shown "
                   "in a clean scene from the start pose. For every step you see the image BEFORE the commands, the state, "
-                  "an explanation and the commands; the next image shows their effect. Read it once - the task "
-                  "demonstration follows.")
+                  "an explanation and the commands; the next image shows their effect. "
+                  + ("Read it once - the task demonstration follows." if total else
+                     "Use it to learn the command interface. No task demonstration follows."))
         tag = "PRIMER "
         content = [text_part(header)]
         for f in demo.frames:
