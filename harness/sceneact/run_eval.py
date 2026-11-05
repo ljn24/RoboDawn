@@ -46,10 +46,44 @@ def file_hash(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def source_hashes(root):
+def source_hashes(root, shots=0):
     return {str(p.relative_to(root)): file_hash(p)
-            for sub in ('harness', 'demos/robotwin2/primer') for p in sorted((root / sub).rglob('*'))
+            for sub in source_directories(shots) for p in sorted((root / sub).rglob('*'))
             if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc'}
+
+
+def source_directories(shots):
+    return ('harness', 'demos/robotwin2/primer') + (('demos/robotwin2/expert',) if shots else ())
+
+
+def prepare_one_shot_jobs(reference, ids, config, root=ROOT):
+    if config['shots'] != 1 or config['demo_selection'] != 'fixed_first':
+        raise ValueError('one-shot preset requires fixed_first and shots=1')
+    tasks = config['tasks']
+    if len(tasks) != 20 or len(set(tasks)) != 20:
+        raise ValueError('one-shot preset requires 20 distinct tasks')
+    available = {j['task'] for j in reference['jobs']}
+    if set(tasks) - available:
+        raise ValueError('preset contains unknown tasks')
+    selected = select_jobs(reference, ids)
+    if ids and any(j['task'] not in tasks for j in selected):
+        raise ValueError('job IDs must belong to the 20-task preset')
+    jobs = [dict(j, shots=1, demo_selection='fixed_first',
+                 demo_path=f"demos/robotwin2/expert/{j['task']}")
+            for j in selected if j['task'] in tasks]
+    # Validate every selected task before starting any costly workers.
+    from harness.agent.demos import load_saved_demo
+    from PIL import Image
+    import io
+    for task in sorted({j['task'] for j in jobs}):
+        demo = load_saved_demo(root / 'demos/robotwin2/expert' / task)
+        if demo.task != task or demo.kind != 'task' or not demo.frames or not demo.n_images():
+            raise ValueError(f'invalid first demo for {task}')
+        for frame in demo.frames:
+            for _, data in frame.images:
+                with Image.open(io.BytesIO(data)) as image:
+                    image.verify()
+    return jobs
 
 
 def validate_dependencies(root, reference):
@@ -122,7 +156,7 @@ def aggregate(output, jobs, reference, results):
                    notes=['Success-rate denominator is all scheduled jobs; infrastructure errors remain visible.',
                           'Successful averages match SceneAct reporting; missing statistics are null, not zero.',
                           'image_views includes first current observation; image_requests excludes the first.',
-                          'Image counts include logical requests, not HTTP retries. Primer images counted separately.',
+                          'Image counts include logical requests, not HTTP retries; model_images_including_primer includes task demos too.',
                           'RoboDawn uses its native overview, top-down and two wrist views; cameras differ from SceneAct.',
                           'RoboDawn uses Chat Completions, temperature=0 and max_tokens=8000; baseline request settings differ.',
                           'Object-fell early termination retained; native motion planner retained with 0.5 retiming.'])
@@ -231,7 +265,8 @@ def _run_job(job, slot, plan, output, devices):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path)
-    parser.add_argument('--reference', type=Path, default=REFERENCE)
+    parser.add_argument('--reference', type=Path)
+    parser.add_argument('--preset', choices=['zero-shot', 'one-shot-20'], default='zero-shot')
     parser.add_argument('--robotwin-root', type=Path, default=ROOT.parent / 'SceneAct/RoboTwin')
     parser.add_argument('--python', type=Path, default=ROOT.parent / 'SceneAct/.venvs/robotwin/bin/python')
     parser.add_argument('--gpus', default='0,1,2,3,4,5,6,7')
@@ -242,20 +277,25 @@ def main():
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--resume', action='store_true')
     args = parser.parse_args()
-    reference_path = args.reference.resolve()
+    preset = (json.loads((ROOT / 'harness/configs/sceneact/one_shot_20.json').read_text())
+              if args.preset == 'one-shot-20' else None)
+    shots = 1 if preset else 0
+    reference_path = (args.reference or (REFERENCE.parent / preset['reference'] if preset else REFERENCE)).resolve()
     reference = json.loads(reference_path.read_text(encoding='utf-8'))
-    jobs = select_jobs(reference, args.job_ids)
+    jobs = (prepare_one_shot_jobs(reference, args.job_ids, preset) if preset
+            else select_jobs(reference, args.job_ids))
     gpus = [int(g) for g in args.gpus.split(',')]
     if args.workers_per_gpu < 1 or len(set(gpus)) != len(gpus) or args.launch_stagger_s < 0:
         raise ValueError('invalid worker configuration')
     robotwin_root, output = args.robotwin_root.resolve(), args.output.resolve()
     identities = validate_dependencies(robotwin_root, reference)
     plan = dict(protocol=reference['protocol'], jobs=jobs, reference_sha256=file_hash(reference_path),
-                sources=source_hashes(ROOT), robotwin_root=str(robotwin_root), dependencies=identities,
+                sources=source_hashes(ROOT, shots), robotwin_root=str(robotwin_root), dependencies=identities,
                 python=str(args.python.absolute()), gpus=gpus, workers_per_gpu=args.workers_per_gpu,
                 launch_stagger_s=args.launch_stagger_s, process_timeout_s=reference['process_timeout_s'],
                 budget=reference['budget'], model=evaluation_model_config(reference['model']),
-                baseline_model=reference['model'], shots=0, retain_object_fell=True,
+                baseline_model=reference['model'], shots=shots, retain_object_fell=True,
+                demo_selection='fixed_first' if shots else None,
                 observation_mode='robodawn_native')
     if args.dry_run:
         print(json.dumps({k: v for k, v in plan.items() if k not in ('sources', 'jobs')}, indent=2))
@@ -269,7 +309,7 @@ def main():
     if args.resume:
         if json.loads((output / 'manifest.json').read_text(encoding='utf-8')) != plan:
             raise ValueError('resume manifest differs; use a new output')
-        if source_hashes(output / 'workspace') != plan['sources']:
+        if source_hashes(output / 'workspace', shots) != plan['sources']:
             raise ValueError('frozen source changed')
         if file_hash(output / 'reference.json') != plan['reference_sha256']:
             raise ValueError('frozen reference changed')
@@ -277,7 +317,7 @@ def main():
         output.mkdir(parents=True, exist_ok=False)
         write_json(output / 'manifest.json', plan)
         shutil.copy2(reference_path, output / 'reference.json')
-        for sub in ('harness', 'demos/robotwin2/primer'):
+        for sub in source_directories(shots):
             shutil.copytree(ROOT / sub, output / 'workspace' / sub, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     write_json(output / 'devices.json', devices)
     results = {}

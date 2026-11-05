@@ -33,7 +33,7 @@ def main():
         model_config = evaluation_model_config(reference['model'])
         report['model_config'] = model_config
         client = MatchedChatClient(model_config, output)
-        agent = MatchedAgent(root, client, reference, output)
+        agent = MatchedAgent(root, client, reference, output, job=job)
         env = MatchedEnv(job, reference, args.render_device)
         report['cold_start_s'] = time.monotonic()-cold_start
         reset = time.monotonic()

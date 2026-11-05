@@ -1,0 +1,28 @@
+{
+  "reference": "reference_actions2x.json",
+  "shots": 1,
+  "demo_selection": "fixed_first",
+  "task_source": "../SceneAct/configs/demos/tasks.yaml",
+  "tasks": [
+    "place_fan",
+    "put_bottles_dustbin",
+    "place_phone_stand",
+    "handover_mic",
+    "place_dual_shoes",
+    "rotate_qrcode",
+    "turn_switch",
+    "pick_diverse_bottles",
+    "stamp_seal",
+    "handover_block",
+    "place_bread_basket",
+    "place_bread_skillet",
+    "place_mouse_pad",
+    "place_burger_fries",
+    "blocks_ranking_size",
+    "open_laptop",
+    "place_object_stand",
+    "beat_block_hammer",
+    "move_can_pot",
+    "place_shoe"
+  ]
+}

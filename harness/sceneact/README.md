@@ -4,6 +4,57 @@ This entry evaluates RoboDawn zero-shot against the **135/250 Adaptive Full**
 SceneAct baseline. The original `harness/run_robotwin_eval.py` remains available.
 These are adapted protocol results, not a reproduction of RoboDawn's published score.
 
+## Fixed-first one-shot on the selected 20 tasks
+
+Use the new `one-shot-20` preset:
+
+```bash
+../SceneAct/.venvs/robotwin/bin/python -B -m harness.sceneact.run_eval \
+  --preset one-shot-20 --output results/sceneact54_oneshot20_actions2x --dry-run
+
+../SceneAct/.venvs/robotwin/bin/python -B -u -m harness.sceneact.run_eval \
+  --preset one-shot-20 --output results/sceneact54_oneshot20_actions2x \
+  --api-key-file ../SceneAct/configs/models/deepseek_flash.key
+```
+
+`harness/configs/sceneact/one_shot_20.json` freezes the 20 tasks from SceneAct's
+`configs/demos/tasks.yaml`. Each uses the five original C2R episodes (e0–e4),
+with unchanged IDs, seeds and reviewed instructions: **100 episodes total**.
+The preset defaults to `reference_actions2x.json`, exactly matching the completed
+`results/sceneact54_zeroshot_actions2x` run: `ceil(step_lim / 5)` physical primitives,
+`step_lim × 0.2` simulation seconds, 0.5 motion speed, 10800 s watchdog,
+and the same DeepSeek low-effort request settings. The older zero-shot default
+and the protocol table below use `/10`; do not use that default for this experiment.
+
+Every request contains the native command primer plus exactly one RoboDawn expert
+demo, loaded directly from `demos/robotwin2/expert/<task>/demo.json` and its images.
+No `+2` entry, grasp-side matching, evaluation-state lookup or fallback is used.
+Missing/corrupt first demos fail preflight. Native task-demo prompt wording is
+restored for this mode. Current observations remain the same four RGB views.
+Across these 20 tasks, each request contains 15–48 images including the primer,
+task demo and current observations.
+
+The expert bank is hashed and copied into the isolated workspace for one-shot
+runs. Each worker saves `demo_task/`, records `shots=1`, `demo_selection=fixed_first`
+and `demo_source`, and accounts for all demo images/tokens in model usage.
+The legacy metric name `model_images_including_primer` includes task-demo images
+as well. Use a fresh output directory; `--resume` only accepts an identical manifest.
+`--job-ids` can select a smoke episode within the preset without changing its ID.
+Default concurrency is still 8 GPUs × 3 workers; adjust `--gpus` if GPUs are occupied.
+
+Validation: 25 offline protocol/one-shot tests pass, and the 100-episode dry run
+passes dependency and demo image checks. The model/budget settings were compared
+against the completed actions2x manifest.
+
+The 2026-11-05 run finished with **10/100 successes (10%)**, compared with
+**2/100 (2%)** for zero-shot on the exact same selected episodes. There were
+99 normally completed evaluations and one `model_api_error` on
+`190_c2r_rotate_qrcode_e3` (`'NoneType' object is not subscriptable`). That episode
+was intentionally not rerun and remains in the 100-episode denominator.
+Normal failures comprised 63 simulation-budget stops, 13 primitive-budget stops
+and 13 object-fell stops. Local artifacts are in
+`results/sceneact54_oneshot20_actions2x/`; results are ignored by Git.
+
 ## Frozen reference
 
 `harness/configs/sceneact/reference.json` was exported from ja24:

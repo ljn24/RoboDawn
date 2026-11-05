@@ -1,4 +1,4 @@
-"""RoboDawn zero-shot loop with SceneAct termination and accounting."""
+"""RoboDawn zero/one-shot loop with SceneAct termination and accounting."""
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -6,16 +6,16 @@ import time
 
 import yaml
 
-from harness.agent.demos import build_demo, demo_messages, save_demo
+from harness.agent.demos import build_demo, demo_messages, save_demo, load_saved_demo
 from harness.agent.llm_client import text_part
 from harness.agent.memory import AgentMemory
 from harness.agent.mllm_agent import AgentConfig, MLLMDiscreteAgent, _update_grasp_facts
-from harness.agent.prompts import PRIMER_NOTE, parse_agent_json, system_prompt, turn_text
+from harness.agent.prompts import DEMO_NOTE, PRIMER_NOTE, parse_agent_json, system_prompt, turn_text
 from harness.core.commands import parse_command_list
 
 
 class MatchedAgent(MLLMDiscreteAgent):
-    def __init__(self, root, client, reference, output):
+    def __init__(self, root, client, reference, output, job=None):
         self.client, self.output = client, Path(output)
         profile = yaml.safe_load((root / 'harness/configs/robotwin2_profile.yaml').read_text(encoding='utf-8'))
         # Keep the native AgentConfig camera selection and benchmark profile.
@@ -24,7 +24,22 @@ class MatchedAgent(MLLMDiscreteAgent):
                                timeout_s=reference['model']['timeout_s'])
         (self.output / 'agent_config.json').write_text(json.dumps(asdict(self.cfg), indent=2), encoding='utf-8')
         primer = build_demo(root / 'demos/robotwin2/primer')
-        self.demo_msgs = demo_messages([primer])
+        self.shots = (job or {}).get('shots', 0)
+        if self.shots not in (0, 1):
+            raise ValueError('only zero/one-shot supported')
+        self.task_demo = None
+        demos = [primer]
+        if self.shots:
+            # Direct loading: never consult evaluation state or automatic side selection.
+            relative = f"demos/robotwin2/expert/{job['task']}"
+            if job.get('demo_selection') != 'fixed_first' or job.get('demo_path') != relative:
+                raise ValueError('one-shot requires the fixed first task demo')
+            self.task_demo = load_saved_demo(root / relative)
+            if self.task_demo.task != job['task'] or self.task_demo.kind != 'task':
+                raise ValueError('task demo mismatch')
+            demos.append(self.task_demo)
+            save_demo(self.task_demo, self.output / 'demo_task')
+        self.demo_msgs = demo_messages(demos)
         save_demo(primer, self.output / 'demo_primer')
 
     def run(self, env, instruction, timing, report):
@@ -32,12 +47,14 @@ class MatchedAgent(MLLMDiscreteAgent):
         memory = AgentMemory(use_history=cfg.memory_history, use_scratchpad=cfg.memory_scratchpad,
                              history_turns=cfg.history_turns)
         prompt = system_prompt(cfg.profile, cfg.max_commands_per_turn, cfg.memory_scratchpad,
-                               context=env.prompt_context(), demo_note=PRIMER_NOTE)
+                               context=env.prompt_context(), demo_note=DEMO_NOTE if self.shots else PRIMER_NOTE)
         (self.output / 'system_prompt.txt').write_text(prompt, encoding='utf-8')
         last_results, grasp_facts = [], {}
         report.update(decisions=0, image_requests=0, image_views=0, current_images=0,
                       model_calls=0, invalid_decisions=0, status='running', success=False,
-                      evaluation_completed=False, agent_mode='robodawn_closed_loop', shots=0,
+                      evaluation_completed=False, agent_mode='robodawn_closed_loop', shots=self.shots,
+                      demo_selection='fixed_first' if self.shots else None,
+                      demo_source=self.task_demo.source if self.task_demo else None,
                       command_primer=True, max_commands_per_turn=cfg.max_commands_per_turn)
         while env.control.status is None:
             with timing.measure('observation'):
